@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retrofuturistic Survivor - Versão Final</title>
+    <style>
+        /* As fontes customizadas funcionarão se a pasta 'assets' estiver no lugar certo */
+        @font-face { font-family: 'SD Glitch Robot'; src: url('assets/fonts/SDGlitchRobot.ttf') format('truetype'); }
+        @font-face { font-family: 'Infynyte'; src: url('assets/fonts/Infynyte.otf') format('opentype'); }
+
+        body {
+            margin: 0; padding: 0; background-color: #000; display: flex;
+            justify-content: center; align-items: center; height: 100vh;
+            overflow: hidden; color: white;
+            font-family: 'Infynyte', 'Courier New', Courier, monospace;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+        }
+        /* A UI antiga de HTML foi toda removida */
+    </style>
+</head>
+<body>
+    <audio id="bg-music" loop><source src="assets/audio/musica.mp3" type="audio/mpeg"></audio>
+    <audio id="jump-sfx"><source src="assets/audio/pulo.mp3" type="audio/mpeg"></audio>
+    <audio id="dash-sfx"><source src="assets/audio/dash.mp3" type="audio/mpeg"></audio>
+    <audio id="shoot-sfx"><source src="assets/audio/tiro.mp3" type="audio/mpeg"></audio>
+    <audio id="beam-sfx"><source src="assets/audio/raio.mp3" type="audio/mpeg"></audio>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+// =================================================================================
+// 1. SETUP INICIAL E CONSTANTES
+// =================================================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const PIXEL_FONT = '"Press Start 2P", cursive'; // Fallback para cursive
+canvas.width = window.innerWidth * 0.98;
+canvas.height = window.innerHeight * 0.98;
+
+const BORDER_WIDTH = 4; const PADDING = 20;
+const ACTION_BOX = { x: PADDING, y: PADDING, width: canvas.width - (PADDING * 2), height: canvas.height * 0.75 };
+const UI_BAR = { x: PADDING, y: ACTION_BOX.y + ACTION_BOX.height + PADDING, width: ACTION_BOX.width, height: canvas.height - ACTION_BOX.height - (PADDING * 3) };
+const UI_BAR_DIVIDER_Y = UI_BAR.y + UI_BAR.height * 0.45;
+
+const music = document.getElementById('bg-music'); const jumpSfx = document.getElementById('jump-sfx');
+const dashSfx = document.getElementById('dash-sfx'); const shootSfx = document.getElementById('shoot-sfx');
+const beamSfx = document.getElementById('beam-sfx');
+
+let isMuted = false; let initialInteraction = false; let gameState = 'PLAYING'; let killedEnemies = 0;
+const keys = { a: { pressed: false }, d: { pressed: false }, space: { pressed: false }, shift: { pressed: false } };
+const mouse = { x: canvas.width / 2, y: canvas.height / 2, leftDown: false, rightDown: false };
+let randomTaunt = ""; const FRASES_ZUEIRA = [ "VOCE DE NOVO?", "ERRO 404: HABILIDADE.", "FIM DA LINHA.", "A PERSISTENCIA E O CAMINHO... DA DERROTA.", "ATE A PROXIMA QUEDA." ];
+const GRAVITY = 0.7; const NEON_CYAN = '#00ffff'; const NEON_YELLOW = '#ffff00'; const NEON_GREEN = '#39ff14'; const RETRO_PURPLE = '#ff00ff';
+
+// =================================================================================
+// 2. DEFINIÇÃO DAS CLASSES DO JOGO
+// =================================================================================
+const playerImage = new Image(); playerImage.src = 'assets/images/pinguim_sprite.png'; let playerImageLoaded = false; playerImage.onload = () => { playerImageLoaded = true; };
+const enemyGruntImage = new Image(); enemyGruntImage.src = 'assets/images/inimigo_grunt.png'; let enemyGruntImageLoaded = false; enemyGruntImage.onload = () => { enemyGruntImageLoaded = true; };
+const enemySniperImage = new Image(); enemySniperImage.src = 'assets/images/inimigo_sniper.png'; let enemySniperImageLoaded = false; enemySniperImage.onload = () => { enemySniperImageLoaded = true; };
+
+class Player {
+    constructor() { this.width = 60; this.height = 80; this.x = ACTION_BOX.x + ACTION_BOX.width / 2 - this.width / 2; this.y = ACTION_BOX.y + 50; this.velocity = { x: 0, y: 0 }; this.hp = 100; this.level = 1; this.exp = 0; this.expToNextLevel = 10; this.appliedUpgrades = new Set(); this.stats = { moveSpeed: 5, jumpHeight: 16, maxHp: 100, projectileDamage: 5, attackSpeed: 1, maxJumps: 1, lifesteal: 0, projectileSize: 5, invincibilityDuration: 500, upgradeChoices: 3, revives: 0 }; this.jumps = 0; this.onGround = false; this.facing = 1; this.shootCooldown = 0; this.invincible = false; this.invincibilityTimer = 0; this.isDashing = false; this.dashDuration = 0; this.dashCooldown = 500; this.dashTimer = 0; this.isCharging = false; this.chargeLevel = 0; this.chargeTimer = 0; this.chargePerLevel = 1000; this.isFiringBeam = false; this.beamCooldownTimer = 0; this.beamCooldownLevels = [10000, 15000, 20000]; this.beamUseCount = 0; }
+    draw() { ctx.save(); if (this.isDashing) { ctx.globalAlpha = 0.5; } if (this.invincible && !this.isDashing && Math.floor(Date.now() / 100) % 2 === 0) { ctx.globalAlpha = 0.3; } if (playerImageLoaded) { if (this.facing === -1) { ctx.scale(-1, 1); ctx.drawImage(playerImage, -this.x - this.width, this.y, this.width, this.height); } else { ctx.drawImage(playerImage, this.x, this.y, this.width, this.height); } } else { ctx.fillStyle = NEON_CYAN; ctx.fillRect(this.x, this.y, this.width, this.height); } ctx.restore(); if (this.isCharging || this.chargeLevel > 0) { const centerX = this.x + this.width / 2; const centerY = this.y + this.height / 2; for (let i = 0; i < this.chargeLevel; i++) { ctx.beginPath(); ctx.arc(centerX, centerY, 10 + i * 5, 0, Math.PI * 2); ctx.strokeStyle = NEON_YELLOW; ctx.lineWidth = 2; ctx.stroke(); } if (this.isCharging && this.chargeLevel < 3) { ctx.beginPath(); ctx.arc(centerX, centerY, 40, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2) * (this.chargeTimer / this.chargePerLevel)); ctx.strokeStyle = NEON_YELLOW; ctx.lineWidth = 3; ctx.stroke(); } } }
+    update(deltaTime) {
+        if (this.shootCooldown > 0) this.shootCooldown -= deltaTime; if (this.beamCooldownTimer > 0) this.beamCooldownTimer -= deltaTime; if (this.dashTimer > 0) this.dashTimer -= deltaTime; if (this.invincibilityTimer > 0) { this.invincibilityTimer -= deltaTime; } else { this.invincible = this.isDashing; }
+        if (this.isDashing) { this.dashDuration -= deltaTime; if (this.dashDuration <= 0) { this.isDashing = false; } this.velocity.y = 0; } else { this.velocity.x = 0; if (keys.a.pressed) { this.velocity.x = -this.stats.moveSpeed; this.facing = -1; } if (keys.d.pressed) { this.velocity.x = this.stats.moveSpeed; this.facing = 1; } this.velocity.y += GRAVITY; }
+        this.x += this.velocity.x; this.y += this.velocity.y;
+        this.onGround = false;
+        platforms.forEach(p => { const playerBottom = this.y + this.height; if (this.x < p.x + p.width && this.x + this.width > p.x) { if (this.velocity.y >= 0 && playerBottom >= p.y && (this.y + this.height - this.velocity.y) <= p.y) { this.velocity.y = 0; this.y = p.y - this.height; this.onGround = true; this.jumps = 0; } } });
+        if (this.x < ACTION_BOX.x) this.x = ACTION_BOX.x; if (this.x + this.width > ACTION_BOX.x + ACTION_BOX.width) { this.x = ACTION_BOX.x + ACTION_BOX.width - this.width; }
+        if (keys.space.pressed && this.jumps < this.stats.maxJumps) { this.velocity.y = -this.stats.jumpHeight; this.jumps++; keys.space.pressed = false; if (!isMuted) { jumpSfx.currentTime = 0; jumpSfx.play().catch(e=>{}); } }
+        if (mouse.leftDown && this.shootCooldown <= 0) { this.shoot(); }
+        if (mouse.rightDown && this.chargeLevel < 3 && this.beamCooldownTimer <= 0) { this.isCharging = true; this.chargeTimer += deltaTime; if (this.chargeTimer >= this.chargePerLevel) { this.chargeTimer = 0; this.chargeLevel++; } } else { if(!mouse.rightDown) { this.isCharging = false; this.chargeTimer = 0; } }
+    }
+    shoot() { this.shootCooldown = 500 / this.stats.attackSpeed; if (!isMuted) { shootSfx.currentTime = 0; shootSfx.play().catch(e=>{}); } const angle = Math.atan2(mouse.y - (this.y + this.height / 2), mouse.x - (this.x + this.width / 2)); projectiles.push(new Projectile( this.x + this.width / 2, this.y + this.height / 2, Math.cos(angle) * 10, Math.sin(angle) * 10, this.stats.projectileDamage, 'player', this.stats.projectileSize )); }
+    takeDamage(amount) { if (this.invincible) return; this.hp -= amount; this.invincible = true; this.invincibilityTimer = this.stats.invincibilityDuration; if (this.hp <= 0) { if (this.stats.revives > 0) { this.stats.revives--; this.hp = this.stats.maxHp / 2; enemies.forEach(e => e.takeDamage(9999)); } else { this.hp = 0; gameState = 'GAME_OVER'; randomTaunt = FRASES_ZUEIRA[Math.floor(Math.random() * FRASES_ZUEIRA.length)]; } } }
+    addExp(amount) { this.exp += amount; if (this.exp >= this.expToNextLevel) { this.level++; this.exp -= this.expToNextLevel; this.expToNextLevel = Math.floor(this.expToNextLevel * 1.5); this.hp = this.stats.maxHp; generateLevelUpChoices(); } }
+    attemptDash() { if (this.dashTimer <= 0) { this.isDashing = true; this.dashDuration = 150; this.dashTimer = this.dashCooldown; this.velocity.x = 25 * this.facing; if (!isMuted) { dashSfx.currentTime = 0; dashSfx.play().catch(e=>{}); } } }
+    fireBeam() { if (this.chargeLevel > 0 && this.beamCooldownTimer <= 0) { if (!isMuted) { beamSfx.currentTime = 0; beamSfx.play().catch(e=>{}); } activeBeams.push(new SuperBeam(this, this.chargeLevel)); const cooldownIndex = Math.min(this.beamUseCount, this.beamCooldownLevels.length - 1); this.beamCooldownTimer = this.beamCooldownLevels[cooldownIndex]; this.beamUseCount++; this.chargeLevel = 0; } }
+}
+class Projectile {
+    constructor(x, y, vx, vy, damage, owner, size) { this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.damage = damage; this.owner = owner; this.radius = size; this.markedForDeletion = false; }
+    draw() { ctx.fillStyle = this.owner === 'player' ? NEON_YELLOW : 'white'; ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fill(); }
+    update() { this.x += this.vx; this.y += this.vy; if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) { this.markedForDeletion = true; } for (const p of platforms) { if (this.x > p.x && this.x < p.x + p.width && this.y > p.y && this.y < p.y + p.height) { this.markedForDeletion = true; break; } } }
+}
+class Enemy {
+    constructor() { this.width = 60; this.height = 60; this.x = ACTION_BOX.x + Math.random() * (ACTION_BOX.width - this.width); this.y = PADDING + 30; this.initialY = this.y; this.hp = 20; this.maxHp = 20; this.expValue = 5; this.markedForDeletion = false; this.aiState = 'PATROLLING'; this.aiStateTimer = 2000 + Math.random() * 2000; this.strafeDirection = (Math.random() < 0.5 ? 1 : -1); this.chaseSpeed = 1 + Math.random(); }
+    update(deltaTime) { this.aiStateTimer -= deltaTime; if (this.aiStateTimer <= 0) { this.switchAiState(); } this.move(deltaTime); if (this.hp <= 0) { this.markedForDeletion = true; player.addExp(this.expValue); killedEnemies++; } }
+    switchAiState() { const nextState = Math.random(); if (nextState < 0.6) { this.aiState = 'CHASING'; this.aiStateTimer = 2000 + Math.random() * 1000; } else if (nextState < 0.9) { this.aiState = 'STRAFING'; this.aiStateTimer = 1500 + Math.random() * 1000; this.strafeDirection *= -1; } else { this.aiState = 'IDLE'; this.aiStateTimer = 500 + Math.random() * 500; } }
+    move(deltaTime) { switch(this.aiState) { case 'CHASING': const dx = player.x - this.x; this.x += (dx > 0 ? 1 : -1) * this.chaseSpeed; break; case 'STRAFING': this.x += this.strafeDirection * (this.chaseSpeed * 1.5); break; case 'IDLE': break; } if (this.x < ACTION_BOX.x) this.x = ACTION_BOX.x; if (this.x + this.width > ACTION_BOX.x + ACTION_BOX.width) { this.x = ACTION_BOX.x + ACTION_BOX.width - this.width; } this.y = this.initialY + Math.sin((gameTime + this.x) / 500) * 15; }
+    drawHealthBar() { if (this.hp < this.maxHp) { ctx.fillStyle = 'red'; ctx.fillRect(this.x, this.y - 10, this.width, 5); ctx.fillStyle = NEON_GREEN; ctx.fillRect(this.x, this.y - 10, this.width * (this.hp / this.maxHp), 5); } }
+    takeDamage(amount) { this.hp -= amount; if (player.stats.lifesteal > 0) player.hp = Math.min(player.stats.maxHp, player.hp + amount * player.stats.lifesteal); }
+}
+class Grunt extends Enemy {
+    constructor() { super(); this.hp = 25; this.maxHp = 25; this.shootTimer = 1500; this.burstCount = 0; this.burstDelay = 100; }
+    draw() { if (enemyGruntImageLoaded) { ctx.drawImage(enemyGruntImage, this.x, this.y, this.width, this.height); } else { ctx.fillStyle = 'white'; ctx.fillRect(this.x, this.y, this.width, this.height); } this.drawHealthBar(); }
+    update(deltaTime) { super.update(deltaTime); this.shootTimer -= deltaTime; if (this.shootTimer <= 0 && this.burstCount <= 0) { this.burstCount = 3; } if (this.burstCount > 0) { this.burstDelay -= deltaTime; if (this.burstDelay <= 0) { this.shoot(); } } }
+    shoot() { if (this.burstCount <= 0) return; this.burstCount--; this.burstDelay = 100; this.shootTimer = 2500 + Math.random() * 1000; const angle = Math.atan2((player.y + player.height / 2) - (this.y + this.height / 2), (player.x + player.width / 2) - (this.x + this.width/2)); projectiles.push(new Projectile(this.x + this.width / 2, this.y + this.height / 2, Math.cos(angle) * 4, Math.sin(angle) * 4, 10, 'enemy', 5)); }
+}
+class Sniper extends Enemy {
+    constructor() { super(); this.hp = 15; this.maxHp = 15; this.expValue = 8; this.shootTimer = 2500; }
+    draw() { if (enemySniperImageLoaded) { ctx.drawImage(enemySniperImage, this.x, this.y, this.width * 0.8, this.height * 1.2); } else { ctx.fillStyle = '#ff8c00'; ctx.fillRect(this.x, this.y, this.width * 0.8, this.height * 1.2); } this.drawHealthBar(); }
+    update(deltaTime) { super.update(deltaTime); this.shootTimer -= deltaTime; if (this.shootTimer <= 0) { this.shoot(); } }
+    shoot() { this.shootTimer = 2000 + Math.random() * 500; const angle = Math.atan2((player.y + player.height / 2) - (this.y + this.height / 2), (player.x + player.width / 2) - (this.x + this.width/2)); projectiles.push(new Projectile(this.x + this.width / 2, this.y + this.height / 2, Math.cos(angle) * 12, Math.sin(angle) * 12, 15, 'enemy', 7)); }
+}
+class SuperBeam {
+    constructor(player, chargeLevel) { this.player = player; this.chargeLevel = chargeLevel; this.duration = 2000; this.markedForDeletion = false; this.targets = this.findNearestEnemies(chargeLevel * 2); this.targets.forEach(enemy => { if (enemy) enemy.takeDamage(100 * chargeLevel); }); this.lightningSegments = []; this.generateLightning(); }
+    findNearestEnemies(count) { return enemies.map(enemy => ({ enemy: enemy, dist: Math.hypot(enemy.x - this.player.x, enemy.y - this.player.y) })).sort((a, b) => a.dist - b.dist).slice(0, count).map(item => item.enemy); }
+    generateLightning() { this.targets.forEach(target => { let lightning = []; let startX = this.player.x + this.player.width / 2; let startY = this.player.y + this.player.height / 2; let endX = target.x + target.width / 2; let endY = target.y + target.height / 2; lightning.push({x: startX, y: startY}); let segments = 10; for (let i = 1; i < segments; i++) { let pointX = startX + (endX - startX) * i / segments; let pointY = startY + (endY - startY) * i / segments; lightning.push({ x: pointX + (Math.random() - 0.5) * 20, y: pointY + (Math.random() - 0.5) * 20 }); } lightning.push({x: endX, y: endY}); this.lightningSegments.push(lightning); }); }
+    update(deltaTime) { this.duration -= deltaTime; if (this.duration <= 0) { this.markedForDeletion = true; this.player.isFiringBeam = false; } }
+    draw() { ctx.strokeStyle = NEON_YELLOW; ctx.lineWidth = 3 + this.chargeLevel; ctx.globalAlpha = Math.max(0, this.duration / 2000); this.lightningSegments.forEach(lightning => { ctx.beginPath(); ctx.moveTo(lightning[0].x, lightning[0].y); for (let i = 1; i < lightning.length; i++) { ctx.lineTo(lightning[i].x, lightning[i].y); } ctx.stroke(); }); ctx.globalAlpha = 1; }
+}
+// =================================================================================
+// 3. OBJETOS E VARIÁVEIS GLOBAIS DO JOGO
+// =================================================================================
+const platforms = [ { x: ACTION_BOX.x, y: ACTION_BOX.y + ACTION_BOX.height - 40, width: ACTION_BOX.width, height: 40 }, { x: ACTION_BOX.x + ACTION_BOX.width * 0.1, y: ACTION_BOX.y + ACTION_BOX.height - 180, width: ACTION_BOX.width * 0.25, height: 20 }, { x: ACTION_BOX.x + ACTION_BOX.width - (ACTION_BOX.width * 0.35), y: ACTION_BOX.y + ACTION_BOX.height - 180, width: ACTION_BOX.width * 0.25, height: 20 }, { x: ACTION_BOX.x + ACTION_BOX.width / 2 - 100, y: ACTION_BOX.y + ACTION_BOX.height - 320, width: 200, height: 20 } ];
+const allUpgrades = [ { name: 'Catalyst', description: 'Dano do Projétil +2', rarity: 'common', apply: (p) => p.stats.projectileDamage += 2 }, { name: 'Growth', description: 'Vida Máx. +10', rarity: 'common', apply: (p) => { p.stats.maxHp += 10; p.hp += 10; }}, { name: 'Resonance', description: 'Velocidade de Ataque +12%', rarity: 'common', apply: (p) => p.stats.attackSpeed *= 1.12 }, { name: 'Swift', description: 'Velocidade de Movimento +20%', rarity: 'common', apply: (p) => p.stats.moveSpeed *= 1.20 }, { name: 'Impulse', description: 'Altura do Pulo +30%', rarity: 'common', apply: (p) => p.stats.jumpHeight *= 1.30 }, { name: 'Renew', description: 'Cura toda a Vida', rarity: 'common', apply: (p) => p.hp = p.stats.maxHp }, { name: 'Gush', description: 'Ganha +1 Pulo', rarity: 'uncommon', apply: (p) => p.stats.maxJumps += 1 }, { name: 'Leech', description: 'Roubo de Vida de 3% do Dano', rarity: 'uncommon', apply: (p) => p.stats.lifesteal += 0.03 }, { name: 'Charge', description: 'Tamanho do Projétil +20%', rarity: 'common', apply: (p) => p.stats.projectileSize *= 1.20 }, { name: 'Cloak', description: 'Invulnerabilidade pós-dano +10%', rarity: 'common', apply: (p) => p.stats.invincibilityDuration *= 1.10 }, { name: 'Appraisal', description: '+1 escolha de item ao subir de nível', rarity: 'rare', apply: (p) => p.stats.upgradeChoices += 1 }, { name: 'Immortal', description: '+1 Reviver (mata todos os inimigos)', rarity: 'epic', apply: (p) => { p.stats.revives += 1; }, oneTime: true }, ];
+let levelUpChoices = []; let projectiles = []; let enemies = []; let activeBeams = [];
+let gameTime = 0; let lastTime = 0; let currentFps = 0; let frameCount = 0; let frameTime = 0;
+let enemySpawnTimer = 4000;
+let player = new Player();
+
+// =================================================================================
+// 4. FUNÇÕES DE DESENHO E LÓGICA
+// =================================================================================
+function generateLevelUpChoices() { gameState = 'LEVEL_UP'; levelUpChoices = []; const available = [...allUpgrades.filter(u => !(u.oneTime && player.appliedUpgrades.has(u.name)))]; for (let i = 0; i < player.stats.upgradeChoices; i++) { if (available.length === 0) break; const randomIndex = Math.floor(Math.random() * available.length); levelUpChoices.push(available[randomIndex]); available.splice(randomIndex, 1); } }
+function drawLayout() { ctx.strokeStyle = RETRO_PURPLE; ctx.lineWidth = BORDER_WIDTH; ctx.strokeRect(ACTION_BOX.x, ACTION_BOX.y, ACTION_BOX.width, ACTION_BOX.height); ctx.strokeRect(UI_BAR.x, UI_BAR.y, UI_BAR.width, UI_BAR.height); }
+function drawInfoBar() {
+    const bar = UI_BAR; ctx.fillStyle = RETRO_PURPLE; ctx.fillRect(bar.x + (BORDER_WIDTH/2), UI_BAR_DIVIDER_Y, bar.width - BORDER_WIDTH, BORDER_WIDTH / 2);
+    ctx.font = `14px ${PIXEL_FONT}`; ctx.fillStyle = 'white'; ctx.textAlign = 'left';
+    const minutes = Math.floor(gameTime / 60000); const seconds = Math.floor((gameTime % 60000) / 1000); const timeString = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    ctx.fillText(`TEMPO: ${timeString}`, bar.x + 20, bar.y + 30); ctx.fillText(`MORTES: ${killedEnemies}`, bar.x + 20, bar.y + 55);
+    ctx.textAlign = 'right'; const expPercent = player.expToNextLevel > 0 ? (player.exp / player.expToNextLevel * 100).toFixed(0) : 100;
+    ctx.fillText(`EXP: ${expPercent}%`, bar.x + bar.width - 20, bar.y + 30); ctx.fillText(`FPS: ${currentFps}`, bar.x + bar.width - 20, bar.y + 55);
+    ctx.textAlign = 'left'; ctx.font = `16px ${PIXEL_FONT}`;
+    ctx.fillText(player.appliedUpgrades.has("Immortal") ? `JOGADOR+${player.stats.revives}`: "JOGADOR", bar.x + 20, UI_BAR_DIVIDER_Y + 40);
+    ctx.fillText(`LV ${player.level}`, bar.x + 20, UI_BAR_DIVIDER_Y + 65);
+    const hpBarWidth = 250; const hpBarHeight = 22; const hpBarX = bar.x + 220; const hpBarY = UI_BAR_DIVIDER_Y + 25;
+    ctx.fillStyle = RETRO_PURPLE; ctx.fillText('HP', hpBarX - 40, hpBarY + hpBarHeight - 5); ctx.fillStyle = 'red'; ctx.fillRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+    ctx.fillStyle = 'yellow'; ctx.fillRect(hpBarX, hpBarY, hpBarWidth * (player.hp / player.stats.maxHp), hpBarHeight);
+    ctx.fillStyle = 'white'; ctx.font = `14px ${PIXEL_FONT}`; ctx.fillText(`${Math.ceil(player.hp)}/${player.stats.maxHp}`, hpBarX + hpBarWidth + 10, hpBarY + hpBarHeight - 5);
+    ctx.font = `12px ${PIXEL_FONT}`; const cooldownsX = bar.x + bar.width - 350; const cooldownsY = UI_BAR_DIVIDER_Y + 40;
+    ctx.fillText('DASH:', cooldownsX, cooldownsY); ctx.fillStyle = player.dashTimer > 0 ? '#555' : NEON_YELLOW; ctx.fillRect(cooldownsX + 70, cooldownsY - 10, 100, 15);
+    ctx.fillText('BEAM:', cooldownsX, cooldownsY + 25); const beamCooldownProgress = player.beamCooldownTimer > 0 ? (player.beamCooldownTimer / player.beamCooldownLevels[Math.min(player.beamUseCount, player.beamCooldownLevels.length-1)] || 1) : 0; ctx.fillStyle = '#555'; ctx.fillRect(cooldownsX + 70, cooldownsY + 15, 100, 15); ctx.fillStyle = NEON_GREEN; ctx.fillRect(cooldownsX + 70, cooldownsY + 15, 100 * (1 - beamCooldownProgress), 15);
+}
+function drawPlatforms() { platforms.forEach(p => { ctx.fillStyle = '#222'; ctx.fillRect(p.x, p.y, p.width, p.height); }); }
+function drawLevelUpScreen() { ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.textAlign = 'center'; ctx.font = `32px ${PIXEL_FONT}`; ctx.fillStyle = 'white'; ctx.fillText('NIVEL ALCANCADO!', canvas.width / 2, 150); ctx.font = `18px ${PIXEL_FONT}`; ctx.fillText('Escolha uma melhoria:', canvas.width / 2, 200); levelUpChoices.forEach((upgrade, index) => { const boxHeight = 120; const boxWidth = 500; const startY = 250; const boxY = startY + index * (boxHeight + 20); upgrade.x = canvas.width / 2 - boxWidth / 2; upgrade.y = boxY; upgrade.width = boxWidth; upgrade.height = boxHeight; ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 3; ctx.strokeRect(upgrade.x, upgrade.y, upgrade.width, upgrade.height); ctx.font = `24px ${PIXEL_FONT}`; ctx.fillStyle = '#f1c40f'; ctx.fillText(upgrade.name, canvas.width / 2, upgrade.y + 45); ctx.font = `16px ${PIXEL_FONT}`; ctx.fillStyle = 'white'; ctx.fillText(upgrade.description, canvas.width / 2, upgrade.y + 85); }); }
+function handleLevelUpClick(e) { if (gameState !== 'LEVEL_UP') return; const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY; levelUpChoices.forEach(upgrade => { if (clickX > upgrade.x && clickX < upgrade.x + upgrade.width && clickY > upgrade.y && clickY < upgrade.y + upgrade.height) { upgrade.apply(player); player.appliedUpgrades.add(upgrade.name); gameState = 'PLAYING'; } }); }
+function drawGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.textAlign = 'center';
+    ctx.font = `20px ${PIXEL_FONT}`; ctx.fillStyle = 'white';
+    ctx.fillText("VOCE MORREU", canvas.width / 2, canvas.height / 2 - 100);
+    ctx.font = `36px ${PIXEL_FONT}`; ctx.fillStyle = "#ff4136";
+    ctx.shadowColor = "#ff4136"; ctx.shadowBlur = 10;
+    ctx.fillText(randomTaunt, canvas.width / 2, canvas.height / 2);
+    ctx.shadowBlur = 0; // Reset shadow
+    ctx.font = `22px ${PIXEL_FONT}`; ctx.fillStyle = 'white';
+    ctx.fillText("Pressione [F5] para reiniciar", canvas.width / 2, canvas.height/2 + 100);
+}
+
+function animate(timestamp) {
+    if (!lastTime) { lastTime = timestamp; requestAnimationFrame(animate); return; }
+    const deltaTime = timestamp - lastTime; lastTime = timestamp;
+    frameCount++; frameTime += deltaTime;
+    if (frameTime >= 1000) { currentFps = frameCount; frameCount = 0; frameTime = 0; }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawLayout(); enemies.forEach(e => e.draw());
+    ctx.save(); ctx.beginPath(); ctx.rect(ACTION_BOX.x, ACTION_BOX.y, ACTION_BOX.width, ACTION_BOX.height); ctx.clip();
+    drawPlatforms(); player.draw(); projectiles.forEach(p => p.draw()); activeBeams.forEach(b => b.draw());
+    ctx.restore();
+    if (gameState === 'PLAYING') { drawInfoBar(); }
+    if (gameState === 'PLAYING') {
+        gameTime += deltaTime; player.update(deltaTime); enemies.forEach(e => e.update(deltaTime)); projectiles.forEach(p => p.update()); activeBeams.forEach(b => b.update(deltaTime));
+        projectiles.forEach(proj => {
+            if (proj.owner === 'player') { enemies.forEach(enemy => { if (proj.x > enemy.x && proj.x < enemy.x + enemy.width && proj.y > enemy.y && proj.y < enemy.y + enemy.height) { enemy.takeDamage(proj.damage); proj.markedForDeletion = true; } });
+            } else if (proj.owner === 'enemy') { if (proj.x > player.x && proj.x < player.x + player.width && proj.y > player.y && proj.y < player.y + player.height) { player.takeDamage(proj.damage); proj.markedForDeletion = true; } }
+        });
+        enemySpawnTimer -= deltaTime;
+        if(enemySpawnTimer <= 0) { const enemyType = Math.random() < 0.7 ? Grunt : Sniper; enemies.push(new enemyType()); enemySpawnTimer = Math.max(800, 3000 - (gameTime / 1000) * 20); }
+        projectiles = projectiles.filter(p => !p.markedForDeletion); enemies = enemies.filter(e => !e.markedForDeletion); activeBeams = activeBeams.filter(b => !b.markedForDeletion);
+    }
+    if (gameState === 'LEVEL_UP') { drawLevelUpScreen(); }
+    else if (gameState === 'GAME_OVER') { drawGameOver(); return; }
+    requestAnimationFrame(animate);
+}
+// =================================================================================
+// 5. INICIALIZAÇÃO DO JOGO E EVENT LISTENERS
+// =================================================================================
+function handleFirstInteraction() { if (!initialInteraction) { initialInteraction = true; if (!isMuted) { music.play().catch(e => {}); } } }
+window.addEventListener('keydown', (e) => { handleFirstInteraction(); switch (e.key.toLowerCase()) { case 'a': keys.a.pressed = true; break; case 'd': keys.d.pressed = true; break; case ' ': keys.space.pressed = true; break; case 'shift': if(e.location === 1 && !keys.shift.pressed) { player.attemptDash(); keys.shift.pressed = true; } break; } });
+window.addEventListener('keyup', (e) => { switch (e.key.toLowerCase()) { case 'a': keys.a.pressed = false; break; case 'd': keys.d.pressed = false; break; case ' ': keys.space.pressed = false; break; case 'shift': if(e.location === 1) keys.shift.pressed = false; break; } });
+canvas.addEventListener('mousemove', (e) => { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; mouse.x = (e.clientX - rect.left) * scaleX; mouse.y = (e.clientY - rect.top) * scaleY; });
+canvas.addEventListener('mousedown', (e) => { handleFirstInteraction(); if (e.button === 0) { mouse.leftDown = true; } if (e.button === 2) { mouse.rightDown = true; } if (gameState === 'LEVEL_UP') { handleLevelUpClick(e); } });
+window.addEventListener('mouseup', (e) => { if (e.button === 0) { mouse.leftDown = false; } if (e.button === 2) { mouse.rightDown = false; player.fireBeam(); } });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
